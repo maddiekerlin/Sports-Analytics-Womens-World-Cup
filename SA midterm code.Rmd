@@ -1,0 +1,195 @@
+---
+title: "Sports Analytics Midterm"
+author: "Madelyn Kerlin and Shelby Nichols"
+date: "2024-10-22"
+output: html_document
+---
+
+```{r}
+library(dplyr)
+library(tidyverse)
+library(data.table)
+rawdata= read.csv('goals.csv')
+```
+
+
+```{r}
+womendata= rawdata %>% 
+  separate(tournament_name, c("year","FIFA", "Sex", "World", "Cup"), sep=" ") %>% 
+  filter(Sex== "Women's") %>% 
+  select("year", "match_name", "team_name","home_team", "away_team", "match_period" )
+
+combinedscores= womendata %>% 
+  group_by(year, match_name) %>% 
+  reframe(HomeScore= sum(home_team), AwayScore=sum(away_team)) %>% 
+  separate(match_name, c("HomeTeam", "AwayTeam"), sep= " vs ") 
+
+data2023= data.frame(
+  year=c("2023", "2023", "2023", "2023", "2023", "2023", "2023", "2023"),
+  HomeTeam= c("New Zealand", "Australia", "New Zealand", "Australia", "Australia", "Australia", "Australia", "Australia"),
+  AwayTeam= c("Norway", "Ireland", "Phillipines", "Nigeria", "Canada", "Denmark", "England", "Sweden"),
+  HomeScore=c(1,1,0,2,4,2,1,0),
+  AwayScore= c(0,0,1,3,0,0,3,2))
+
+withlocation=rbind(combinedscores, data2023)
+
+withlocation= withlocation %>% 
+  mutate(Locationplayed = case_when(
+    year == 1991 ~ "China",
+    year == 1995 ~ "Sweden",
+    year == 1999 ~ "United States",
+    year == 2003 ~ "United States",
+    year == 2007 ~ "China",
+    year == 2011 ~ "Germany",
+    year == 2015 ~ "Canada",
+    year == 2019 ~ "France",
+    year == 2023 & HomeTeam == "Australia" ~ "Australia",
+    year == 2023 & HomeTeam == "New Zealand" ~"New Zealand")) %>%   
+  mutate(ContinentPlayed=case_when(
+    Locationplayed == "China" ~ "Asia",
+    Locationplayed %in% c("Sweden", "Germany","France") ~ "Europe",
+    Locationplayed %in% c("United States","Canada") ~ "North America",
+    Locationplayed %in% c("Australia", "New Zealand")~ "Australia")) %>% 
+  
+  mutate(HomeContinent=case_when(
+    HomeTeam %in% c("China", "Thailand", "Japan", "North Korea", "South Korea", "Phillipines", "Russia", "Chinese Taipei")~ "Asia",
+    HomeTeam %in% c("Sweden", "Scotland","Germany","France", "Denmark", "Norway", "Ireland", "England", "Switzerland", "Netherlands", "Italy") ~ "Europe",
+    HomeTeam %in% c("United States","Canada", "Mexico", "Costa Rica", "Jamaica") ~ "North America",
+    HomeTeam %in% c("Australia", "New Zealand")~ "Australia",
+    HomeTeam %in% c("Brazil", "Argentina", "Chile", "Colombia","Spain", "Ecuador")~ "South America",
+    HomeTeam %in% c("Nigeria", "South Africa", "Ghana", "Equatorial Guinea", "Ivory Coast", "Cameroon")~ "Africa")) %>% 
+  
+  mutate(AwayContinent=case_when(
+    AwayTeam %in% c("China", "Thailand", "Japan", "North Korea", "South Korea", "Phillipines", "Russia", "Chinese Taipei")~ "Asia",
+    AwayTeam %in% c("Sweden", "Scotland","Germany","France", "Denmark", "Norway", "Ireland", "England", "Switzerland", "Netherlands", "Italy") ~ "Europe",
+    AwayTeam %in% c("United States","Canada", "Mexico", "Costa Rica", "Jamaica") ~ "North America",
+    AwayTeam %in% c("Australia", "New Zealand")~ "Australia",
+    AwayTeam %in% c("Brazil", "Argentina", "Chile", "Colombia","Spain", "Ecuador")~ "South America",
+    AwayTeam %in% c("Nigeria", "South Africa", "Ghana", "Equatorial Guinea", "Ivory Coast", "Cameroon")~ "Africa"))
+
+
+samecountry= withlocation %>% filter(HomeTeam==Locationplayed)
+
+samecontinent= withlocation %>% 
+  group_by(ContinentPlayed) %>% 
+  filter(ContinentPlayed == AwayContinent | ContinentPlayed==HomeContinent) %>% 
+  filter(HomeContinent!=AwayContinent) %>% 
+  select ("year", "ContinentPlayed", "HomeContinent", "AwayContinent", "HomeScore", "AwayScore")
+
+```
+
+
+HA Data by Country
+```{r}
+HAdatacountry= samecountry %>% 
+  group_by(HomeTeam) %>% 
+  reframe(GoalsScored=sum(HomeScore), GoalsGivenUp=sum(AwayScore), Games= n()) %>% 
+  mutate(Crude= round((GoalsScored)/(GoalsScored+GoalsGivenUp)*100))
+
+HomeGoals= sum(HAdatacountry$GoalsScored, na.rm=TRUE)
+AwayGoals= sum(HAdatacountry$GoalsGivenUp, na.rm=TRUE)
+
+chisq.test(c(HAdatacountry$GoalsScored, HAdatacountry$GoalsGivenUp))
+
+HAdatacountry <- HAdatacountry %>%
+  rowwise() %>%  # Ensure calculations are done row-wise
+   mutate(
+    observed = list(c(GoalsScored, GoalsGivenUp)),
+    expected = list(rep((GoalsScored + GoalsGivenUp) / 2, 2)),
+    test_result = list(chisq.test(observed, p = expected / sum(expected))),
+    x2_value = test_result$statistic,
+    p_value = test_result$p.value) %>%
+  ungroup()
+
+```
+
+HA Data by Continent
+```{r}
+HAdatacontinent= samecontinent %>% 
+  mutate(tempContinent = if_else(AwayContinent == ContinentPlayed, HomeContinent, AwayContinent), tempScore = if_else(AwayContinent == ContinentPlayed, HomeScore, AwayScore)) %>%
+  
+  mutate(HomeContinent = if_else(AwayContinent == ContinentPlayed, AwayContinent, HomeContinent),
+         AwayContinent = tempContinent, HomeScore = if_else(AwayContinent == ContinentPlayed, AwayScore, HomeScore),
+         AwayScore = tempScore) %>% 
+  group_by(HomeContinent) %>% 
+  reframe(GoalsScored=sum(HomeScore), GoalsGivenUp=sum(AwayScore), Games= n()) %>% 
+  mutate(Crude= round((GoalsScored)/(GoalsScored+GoalsGivenUp)*100))
+
+chisq.test(c(HAdatacontinent$GoalsScored, HAdatacontinent$GoalsGivenUp))
+
+HAdatacontinent <- HAdatacontinent %>%
+  rowwise() %>%  # Ensure calculations are done row-wise
+   mutate(
+    observed = list(c(GoalsScored, GoalsGivenUp)),
+    expected = list(rep((GoalsScored + GoalsGivenUp) / 2, 2)),
+    test_result = list(chisq.test(observed, p = expected / sum(expected))),
+    x2_value = test_result$statistic,
+    p_value = test_result$p.value) %>%
+  ungroup()
+
+```
+
+HA Data by Year
+```{r}
+HAdatayear= samecontinent %>% 
+  group_by(year) %>% 
+  reframe(GoalsScored=sum(HomeScore), GoalsGivenUp=sum(AwayScore), Games= n()) %>% 
+  mutate(Crude= round((GoalsScored)/(GoalsScored+GoalsGivenUp)*100))
+chisq.test(c(HAdatayear$GoalsScored, HAdatayear$GoalsGivenUp))
+
+HAdatayear <- HAdatayear %>%
+  rowwise() %>%  # Ensure calculations are done row-wise
+   mutate(
+    observed = list(c(GoalsScored, GoalsGivenUp)),
+    expected = list(rep((GoalsScored + GoalsGivenUp) / 2, 2)),
+    test_result = list(chisq.test(observed, p = expected / sum(expected))),
+    x2_value = test_result$statistic,
+    p_value = test_result$p.value) %>%
+  ungroup()
+
+```
+
+```{r}
+library(ggplot2)
+library(tidyr)
+
+HAdatacountry_long <- HAdatacountry %>%
+  pivot_longer(cols = c(GoalsGivenUp, GoalsScored), 
+               names_to = "GoalType", 
+               values_to = "Goals")
+
+ggplot(HAdatacountry_long, aes(x = HomeTeam, y = Goals, fill = GoalType)) +
+  geom_bar(stat = "identity", position = "stack") + 
+  labs(title = "Visualization of Home Advantage by Country",
+       x = "Home Team",
+       y = "Goals") +
+  scale_fill_manual(values = c("GoalsScored" = "royalblue", "GoalsGivenUp" = "limegreen"),
+                    name = "Goal Type",
+                    labels = c("Away Goals", "Home Goals"))
+
+```
+
+```{r}
+HAdatacontinent_long <- HAdatacontinent %>%
+  pivot_longer(cols = c(GoalsGivenUp, GoalsScored), 
+               names_to = "GoalType", 
+               values_to = "Goals")
+
+ggplot(HAdatacontinent_long, aes(x = HomeContinent, y = Goals, fill = GoalType)) +
+  geom_bar(stat = "identity", position = "stack") + 
+  labs(title = "Visualization of Home Advantage by Continent",
+       x = "Home Team",
+       y = "Goals") +
+  scale_fill_manual(values = c("GoalsScored" = "royalblue", "GoalsGivenUp" = "limegreen"),
+                    name = "Goal Type",
+                    labels = c("Away Goals", "Home Goals"))
+
+
+```
+
+Women's data in CSV format
+```{r}
+womensscores= write.csv(withlocation, "womensscores.csv")
+Womens2023WC= write.csv(data2023, "Womens2023WC.csv")
+WOmensWCdata= write.csv(samecountry, "WomensWCHomeMatches.csv ")
+```
